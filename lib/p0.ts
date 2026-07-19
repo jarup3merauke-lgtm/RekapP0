@@ -60,13 +60,18 @@ interface CicoRow {
   noTugas: string;
   namaRegu: string;
   tglCatatDate: string; // dd/mm/yyyy
-  tglPengerjaanHour: number | null; // jam (0-23) dari Tgl Pengerjaan, waktu WIT
+  tglPengerjaanHour: number | null; // jam (0-23) dari Tgl Pengerjaan, sudah dikonversi ke WIT
 }
+
+// Timestamp di file CICO (APKT EIS) tercatat dalam WIB (UTC+7), sedangkan UP3 Merauke
+// beroperasi di WIT (UTC+9) — tambahkan 2 jam supaya cocok dengan batas shift waktu WIT.
+const WIB_TO_WIT_OFFSET_HOURS = 2;
 
 function extractHour(datetimeStr: string): number | null {
   const m = datetimeStr.match(/\d{1,2}\/\d{1,2}\/\d{4}\s+(\d{1,2}):\d{2}/);
   if (!m) return null;
-  return parseInt(m[1], 10);
+  const wibHour = parseInt(m[1], 10);
+  return (wibHour + WIB_TO_WIT_OFFSET_HOURS) % 24;
 }
 
 function extractCicoRows(buffer: ArrayBuffer): CicoRow[] {

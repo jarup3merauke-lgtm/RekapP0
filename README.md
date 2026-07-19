@@ -11,13 +11,18 @@ Alur pakai:
 
 ## Aturan pengecekan
 
-Untuk setiap "No Tugas" pada tanggal terpilih (posko & regu & shift diambil dari file CICO):
+Untuk setiap "No Tugas" pada tanggal terpilih (posko & regu diambil dari file CICO):
 
 - ✅ **Sudah input Appsheets**: No Tugas ditemukan di file P0 Merauke DAN kolom "FOTO SESUDAH" terisi.
 - ⚠️ **Belum ada eviden**: No Tugas ditemukan di file P0 Merauke TAPI kolom "FOTO SESUDAH" kosong.
 - ❌ **Belum input Appsheets**: No Tugas TIDAK ditemukan sama sekali di file P0 Merauke.
 
-Lookup No Tugas dicek gabungan di kedua sheet file P0 Merauke ("P0 Harian" dan "P0 Terencana").
+Lookup No Tugas dicek gabungan di kedua sheet file P0 Merauke ("P0 Harian" dan "P0 Terencana"), dan case-insensitive (No Tugas/NO P0 disamakan ke huruf besar sebelum dibandingkan).
+
+Shift (Pagi/Sore/Malam) dihitung dari **jam pada kolom "Tgl Pengerjaan"** di file CICO — bukan dari kolom "Shif", karena kolom itu tidak selalu akurat. Timestamp di file CICO (APKT EIS) tercatat dalam WIB, sedangkan UP3 Merauke beroperasi di WIT (WIB + 2 jam), jadi jamnya dikonversi dulu ke WIT (`lib/p0.ts` → `WIB_TO_WIT_OFFSET_HOURS`) sebelum dicocokkan ke batas shift berikut:
+- Pagi: 08:00–14:59
+- Sore: 15:00–21:59
+- Malam: 22:00–07:59 (lintas tengah malam)
 
 Regu yang tidak punya tugas pada tanggal & shift tertentu tetap ditampilkan dengan "nihil". Daftar regu tetap per ULP ada di `lib/roster.ts`.
 
@@ -46,6 +51,6 @@ npm run dev
 - `app/api/preview/route.ts` — proses kedua file + tanggal, hasilkan 5 teks (belum dikirim).
 - `app/api/send/route.ts` — kirim daftar teks yang sudah di-preview ke WhatsApp secara berurutan.
 - `lib/p0.ts` — parsing Excel & logic lookup/pengelompokan regu+shift.
-- `lib/roster.ts` — daftar tetap ULP, regu, dan mapping shift.
+- `lib/roster.ts` — daftar tetap ULP, regu, dan fungsi penentu shift dari jam.
 - `lib/dateId.ts` — helper format tanggal Indonesia.
 - `lib/fonnte.ts` — pemanggilan API Fonnte.
