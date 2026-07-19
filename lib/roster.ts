@@ -58,10 +58,12 @@ export function normPosko(s: string | null | undefined): PoskoKey | null {
   return found ? found.key : null;
 }
 
-export const SHIFT_MAP: Record<string, "Pagi" | "Sore" | "Malam"> = {
-  "SHIFT 1": "Pagi",
-  "SHIFT 2": "Sore",
-  "SHIFT 3": "Malam",
-};
-
 export const SHIFT_ORDER: ("Pagi" | "Sore" | "Malam")[] = ["Pagi", "Sore", "Malam"];
+
+// Shift ditentukan dari jam pengerjaan (waktu WIT), bukan dari kolom "Shif":
+// Pagi 08:00–14:59, Sore 15:00–21:59, Malam 22:00–07:59 (lintas tengah malam).
+export function shiftFromHour(hour: number): "Pagi" | "Sore" | "Malam" {
+  if (hour >= 8 && hour < 15) return "Pagi";
+  if (hour >= 15 && hour < 22) return "Sore";
+  return "Malam";
+}

@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { ULP_ORDER, normRegu, normPosko, SHIFT_MAP, SHIFT_ORDER, type PoskoKey } from "./roster";
+import { ULP_ORDER, normRegu, normPosko, shiftFromHour, SHIFT_ORDER, type PoskoKey } from "./roster";
 import { formatIndonesianDate, compareDdMmYyyyDesc } from "./dateId";
 
 const HEADER_SCAN_ROWS = 12;
@@ -36,8 +36,8 @@ interface CicoCols {
   posko: number;
   noTugas: number;
   namaRegu: number;
-  shif: number;
   tglCatat: number;
+  tglPengerjaan: number;
 }
 
 function resolveCicoCols(header: unknown[]): CicoCols {
@@ -46,8 +46,8 @@ function resolveCicoCols(header: unknown[]): CicoCols {
     posko: idx("posko"),
     noTugas: idx("no tugas"),
     namaRegu: idx("nama regu"),
-    shif: idx("shif"),
     tglCatat: idx("tgl catat"),
+    tglPengerjaan: idx("tgl pengerjaan"),
   };
   for (const [k, v] of Object.entries(cols)) {
     if (v === -1) throw new Error(`Kolom "${k}" tidak ditemukan di file CICO.`);
@@ -59,8 +59,14 @@ interface CicoRow {
   posko: string;
   noTugas: string;
   namaRegu: string;
-  shif: string;
   tglCatatDate: string; // dd/mm/yyyy
+  tglPengerjaanHour: number | null; // jam (0-23) dari Tgl Pengerjaan, waktu WIT
+}
+
+function extractHour(datetimeStr: string): number | null {
+  const m = datetimeStr.match(/\d{1,2}\/\d{1,2}\/\d{4}\s+(\d{1,2}):\d{2}/);
+  if (!m) return null;
+  return parseInt(m[1], 10);
 }
 
 function extractCicoRows(buffer: ArrayBuffer): CicoRow[] {
@@ -81,8 +87,8 @@ function extractCicoRows(buffer: ArrayBuffer): CicoRow[] {
       posko: normText(row[cols.posko]),
       noTugas,
       namaRegu: normText(row[cols.namaRegu]),
-      shif: normText(row[cols.shif]),
       tglCatatDate: datePart,
+      tglPengerjaanHour: extractHour(normText(row[cols.tglPengerjaan])),
     });
   }
   return out;
@@ -172,13 +178,13 @@ export function buildP0Reports(
         .push(`Regu tidak dikenali: "${r.namaRegu}" (No Tugas ${r.noTugas}), diabaikan.`);
       continue;
     }
-    const shiftLabel = SHIFT_MAP[r.shif.toUpperCase()];
-    if (!shiftLabel) {
+    if (r.tglPengerjaanHour === null) {
       warningsByUlp
         .get(poskoKey)!
-        .push(`Shift tidak dikenali: "${r.shif}" (No Tugas ${r.noTugas}), diabaikan.`);
+        .push(`Jam "Tgl Pengerjaan" tidak terbaca (No Tugas ${r.noTugas}), diabaikan.`);
       continue;
     }
+    const shiftLabel = shiftFromHour(r.tglPengerjaanHour);
     const key = normNoTugas(r.noTugas);
     let mark: string;
     if (!p0Lookup.has(key)) mark = "❌";
