@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { ULP_ORDER, normRegu, normPosko, shiftFromHour, SHIFT_ORDER, type PoskoKey } from "./roster";
+import { ULP_ORDER, normRegu, normPosko, shiftFromMinutes, SHIFT_ORDER, type PoskoKey } from "./roster";
 import { formatIndonesianDate, compareDdMmYyyyDesc } from "./dateId";
 
 const HEADER_SCAN_ROWS = 12;
@@ -60,18 +60,19 @@ interface CicoRow {
   noTugas: string;
   namaRegu: string;
   tglCatatDate: string; // dd/mm/yyyy
-  tglPengerjaanHour: number | null; // jam (0-23) dari Tgl Pengerjaan, sudah dikonversi ke WIT
+  tglPengerjaanMinutes: number | null; // menit sejak 00:00 dari Tgl Pengerjaan, sudah dikonversi ke WIT
 }
 
 // Timestamp di file CICO (APKT EIS) tercatat dalam WIB (UTC+7), sedangkan UP3 Merauke
 // beroperasi di WIT (UTC+9) — tambahkan 2 jam supaya cocok dengan batas shift waktu WIT.
-const WIB_TO_WIT_OFFSET_HOURS = 2;
+const WIB_TO_WIT_OFFSET_MINUTES = 2 * 60;
+const MINUTES_PER_DAY = 24 * 60;
 
-function extractHour(datetimeStr: string): number | null {
-  const m = datetimeStr.match(/\d{1,2}\/\d{1,2}\/\d{4}\s+(\d{1,2}):\d{2}/);
+function extractMinutesOfDay(datetimeStr: string): number | null {
+  const m = datetimeStr.match(/\d{1,2}\/\d{1,2}\/\d{4}\s+(\d{1,2}):(\d{2})/);
   if (!m) return null;
-  const wibHour = parseInt(m[1], 10);
-  return (wibHour + WIB_TO_WIT_OFFSET_HOURS) % 24;
+  const wibMinutes = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  return (wibMinutes + WIB_TO_WIT_OFFSET_MINUTES) % MINUTES_PER_DAY;
 }
 
 function extractCicoRows(buffer: ArrayBuffer): CicoRow[] {
@@ -93,7 +94,7 @@ function extractCicoRows(buffer: ArrayBuffer): CicoRow[] {
       noTugas,
       namaRegu: normText(row[cols.namaRegu]),
       tglCatatDate: datePart,
-      tglPengerjaanHour: extractHour(normText(row[cols.tglPengerjaan])),
+      tglPengerjaanMinutes: extractMinutesOfDay(normText(row[cols.tglPengerjaan])),
     });
   }
   return out;
@@ -183,13 +184,13 @@ export function buildP0Reports(
         .push(`Regu tidak dikenali: "${r.namaRegu}" (No Tugas ${r.noTugas}), diabaikan.`);
       continue;
     }
-    if (r.tglPengerjaanHour === null) {
+    if (r.tglPengerjaanMinutes === null) {
       warningsByUlp
         .get(poskoKey)!
         .push(`Jam "Tgl Pengerjaan" tidak terbaca (No Tugas ${r.noTugas}), diabaikan.`);
       continue;
     }
-    const shiftLabel = shiftFromHour(r.tglPengerjaanHour);
+    const shiftLabel = shiftFromMinutes(r.tglPengerjaanMinutes);
     const key = normNoTugas(r.noTugas);
     let mark: string;
     if (!p0Lookup.has(key)) mark = "❌";
