@@ -5,42 +5,45 @@ export type PoskoKey =
   | "TANAH MERAH"
   | "KEPI";
 
-export const ULP_ORDER: { key: PoskoKey; label: string; regu: string[] }[] = [
+export const ULP_ORDER: { key: PoskoKey; label: string; emoji: string; regu: string[] }[] = [
   {
     key: "MERAUKE KOTA",
     label: "ULP Merauke Kota",
-    regu: [
-      "MARO26",
-      "MARO27",
-      "MARO29",
-      "MERAUKE11",
-      "MERAUKE13",
-      "MERAUKE21",
-      "MERAUKE22",
-      "MERAUKE23",
-    ],
+    emoji: "1️⃣",
+    regu: ["MARO26", "MARO27", "MARO29", "MERAUKE13", "MERAUKE21", "MERAUKE23"],
   },
   {
     key: "KUPRIK",
     label: "ULP Kuprik",
+    emoji: "2️⃣",
     regu: ["KUPRIK11", "KUPRIK12", "KUPRIK21", "KUPRIK22"],
   },
   {
     key: "KURIK",
     label: "ULP Kurik",
+    emoji: "3️⃣",
     regu: ["KURIK11", "KURIK21", "KURIK22"],
   },
   {
     key: "TANAH MERAH",
     label: "ULP Tanah Merah",
+    emoji: "4️⃣",
     regu: ["TANMER11", "TANMER21"],
   },
   {
     key: "KEPI",
     label: "ULP Kepi",
+    emoji: "5️⃣",
     regu: ["KEPI11"],
   },
 ];
+
+// MERAUKE11 dan MERAUKE22 tidak lagi direkap sebagai regu tersendiri — gabungkan
+// perhitungannya ke MARO26 dan MARO29 (setelah dinormalisasi lewat normRegu).
+export const REGU_ALIAS: Record<string, string> = {
+  MERAUKE11: "MARO26",
+  MERAUKE22: "MARO29",
+};
 
 export function normRegu(s: string | null | undefined): string {
   return (s ?? "").replace(/\s+/g, "").trim().toUpperCase();

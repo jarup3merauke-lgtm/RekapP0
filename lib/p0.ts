@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { ULP_ORDER, normRegu, normPosko, shiftFromMinutes, SHIFT_ORDER, type PoskoKey } from "./roster";
+import { ULP_ORDER, normRegu, normPosko, shiftFromMinutes, SHIFT_ORDER, REGU_ALIAS, type PoskoKey } from "./roster";
 import { formatIndonesianDate, compareDdMmYyyyDesc } from "./dateId";
 
 const HEADER_SCAN_ROWS = 12;
@@ -230,7 +230,8 @@ export function buildP0Reports(
       continue;
     }
     const ulp = ULP_ORDER.find((u) => u.key === poskoKey)!;
-    const reguNorm = normRegu(r.namaRegu);
+    const reguNormRaw = normRegu(r.namaRegu);
+    const reguNorm = REGU_ALIAS[reguNormRaw] ?? reguNormRaw;
     const matchedRegu = ulp.regu.find((g) => normRegu(g) === reguNorm);
     if (!matchedRegu) {
       warningsByUlp
@@ -265,7 +266,8 @@ export function buildP0Reports(
   const reports: UlpReport[] = [];
   for (const u of ULP_ORDER) {
     const lines: string[] = [];
-    lines.push(`REKAP HARIAN P0 ULP ${u.label.replace(/^ULP /, "")}`);
+    lines.push("*REKAP HARIAN P0*");
+    lines.push(`${u.emoji} ULP ${u.key}`);
     lines.push(formatIndonesianDate(targetDate));
     lines.push("");
     lines.push("✅ : Sudah input Appsheets");
