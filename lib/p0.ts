@@ -20,7 +20,7 @@ function sheetToGrid(ws: XLSX.WorkSheet): unknown[][] {
   return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
 }
 
-// ---------- CICO (No Tugas / Nama Regu / Shift / Posko / Tgl Catat) ----------
+// ---------- CICO (No Tugas / Nama Regu / Posko / Check In Petugas) ----------
 
 function findCicoHeaderRow(rows: unknown[][]): number {
   for (let i = 0; i < Math.min(HEADER_SCAN_ROWS, rows.length); i++) {
@@ -36,8 +36,7 @@ interface CicoCols {
   posko: number;
   noTugas: number;
   namaRegu: number;
-  tglCatat: number;
-  tglPengerjaan: number;
+  checkIn: number;
 }
 
 function resolveCicoCols(header: unknown[]): CicoCols {
@@ -46,8 +45,7 @@ function resolveCicoCols(header: unknown[]): CicoCols {
     posko: idx("posko"),
     noTugas: idx("no tugas"),
     namaRegu: idx("nama regu"),
-    tglCatat: idx("tgl catat"),
-    tglPengerjaan: idx("tgl pengerjaan"),
+    checkIn: idx("check in petugas"),
   };
   for (const [k, v] of Object.entries(cols)) {
     if (v === -1) throw new Error(`Kolom "${k}" tidak ditemukan di file CICO.`);
@@ -55,54 +53,114 @@ function resolveCicoCols(header: unknown[]): CicoCols {
   return cols;
 }
 
-interface CicoRow {
-  posko: string;
-  noTugas: string;
-  namaRegu: string;
-  tglCatatDate: string; // dd/mm/yyyy
-  tglPengerjaanMinutes: number | null; // menit sejak 00:00 dari Tgl Pengerjaan, sudah dikonversi ke WIT
-}
-
 // Timestamp di file CICO (APKT EIS) tercatat dalam WIB (UTC+7), sedangkan UP3 Merauke
 // beroperasi di WIT (UTC+9) — tambahkan 2 jam supaya cocok dengan batas shift waktu WIT.
-const WIB_TO_WIT_OFFSET_MINUTES = 2 * 60;
-const MINUTES_PER_DAY = 24 * 60;
+const WIB_TO_WIT_OFFSET_MS = 2 * 60 * 60 * 1000;
+const MALAM_TAIL_MAX_MINUTES = 5 * 60 + 29; // 05:29 WIT: ekor shift malam setelah tengah malam
 
-function extractMinutesOfDay(datetimeStr: string): number | null {
-  const m = datetimeStr.match(/\d{1,2}\/\d{1,2}\/\d{4}\s+(\d{1,2}):(\d{2})/);
+// Parse "dd/mm/yyyy HH:MM(:SS)" jadi Date UTC (dipakai sebagai jam "naif", tanpa
+// interferensi timezone environment). Return null kalau tidak bisa diparse.
+function parseWibDateTime(s: string): Date | null {
+  const m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/);
   if (!m) return null;
-  const wibMinutes = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-  return (wibMinutes + WIB_TO_WIT_OFFSET_MINUTES) % MINUTES_PER_DAY;
+  const [, d, mo, y, h, mi, sec] = m;
+  return new Date(
+    Date.UTC(parseInt(y, 10), parseInt(mo, 10) - 1, parseInt(d, 10), parseInt(h, 10), parseInt(mi, 10), sec ? parseInt(sec, 10) : 0)
+  );
 }
 
-function extractCicoRows(buffer: ArrayBuffer): CicoRow[] {
+function fmtDate(d: Date): string {
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}/${d.getUTCFullYear()}`;
+}
+
+// Dari jam Check In Petugas (WIB), tentukan shift + tanggal operasional (WIT).
+function resolveShiftAndDate(checkInWib: Date): {
+  shift: "Pagi" | "Sore" | "Malam";
+  operationalDate: string;
+} {
+  const wit = new Date(checkInWib.getTime() + WIB_TO_WIT_OFFSET_MS);
+  const witMinutes = wit.getUTCHours() * 60 + wit.getUTCMinutes();
+  const shift = shiftFromMinutes(witMinutes);
+  const opDate = new Date(wit.getTime());
+  // Check-in di 00:00–05:29 WIT = ekor shift malam yang mulai malam sebelumnya →
+  // tanggal operasionalnya hari sebelumnya.
+  if (witMinutes <= MALAM_TAIL_MAX_MINUTES) {
+    opDate.setUTCDate(opDate.getUTCDate() - 1);
+  }
+  return { shift, operationalDate: fmtDate(opDate) };
+}
+
+interface TaskRecord {
+  noTugas: string;
+  posko: string;
+  namaRegu: string;
+  shift: "Pagi" | "Sore" | "Malam";
+  operationalDate: string; // dd/mm/yyyy
+}
+
+// Kumpulkan per No Tugas: pakai Check In Petugas PALING AWAL di antara semua barisnya
+// sebagai anchor penentu shift & tanggal operasional. posko/regu diambil dari baris
+// dengan check-in paling awal itu.
+function buildTaskRecords(buffer: ArrayBuffer): {
+  records: TaskRecord[];
+  noCheckIn: string[];
+} {
   const wb = XLSX.read(buffer, { type: "array", cellDates: false });
   const rows = sheetToGrid(wb.Sheets[wb.SheetNames[0]]);
   const headerIdx = findCicoHeaderRow(rows);
   const cols = resolveCicoCols(rows[headerIdx]);
-  const out: CicoRow[] = [];
+
+  const earliest = new Map<
+    string,
+    { checkIn: Date | null; posko: string; namaRegu: string; anyPosko: string }
+  >();
+
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
     if (!row) continue;
     const noTugas = normText(row[cols.noTugas]);
     if (!noTugas) continue;
-    const tglCatatRaw = normText(row[cols.tglCatat]);
-    const datePart = tglCatatRaw.split(" ")[0];
-    if (!/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(datePart)) continue;
-    out.push({
-      posko: normText(row[cols.posko]),
+    const posko = normText(row[cols.posko]);
+    const namaRegu = normText(row[cols.namaRegu]);
+    const checkIn = parseWibDateTime(normText(row[cols.checkIn]));
+
+    const cur = earliest.get(noTugas);
+    if (!cur) {
+      earliest.set(noTugas, { checkIn, posko, namaRegu, anyPosko: posko });
+      continue;
+    }
+    if (checkIn && (!cur.checkIn || checkIn.getTime() < cur.checkIn.getTime())) {
+      cur.checkIn = checkIn;
+      cur.posko = posko;
+      cur.namaRegu = namaRegu;
+    }
+    if (!cur.anyPosko && posko) cur.anyPosko = posko;
+  }
+
+  const records: TaskRecord[] = [];
+  const noCheckIn: string[] = [];
+  for (const [noTugas, info] of earliest) {
+    if (!info.checkIn) {
+      noCheckIn.push(noTugas);
+      continue;
+    }
+    const { shift, operationalDate } = resolveShiftAndDate(info.checkIn);
+    records.push({
       noTugas,
-      namaRegu: normText(row[cols.namaRegu]),
-      tglCatatDate: datePart,
-      tglPengerjaanMinutes: extractMinutesOfDay(normText(row[cols.tglPengerjaan])),
+      posko: info.posko || info.anyPosko,
+      namaRegu: info.namaRegu,
+      shift,
+      operationalDate,
     });
   }
-  return out;
+  return { records, noCheckIn };
 }
 
 export function listAvailableDates(cicoBuffer: ArrayBuffer): string[] {
-  const rows = extractCicoRows(cicoBuffer);
-  const dates = new Set(rows.map((r) => r.tglCatatDate));
+  const { records } = buildTaskRecords(cicoBuffer);
+  const dates = new Set(records.map((r) => r.operationalDate));
   return Array.from(dates).sort(compareDdMmYyyyDesc);
 }
 
@@ -146,14 +204,10 @@ export function buildP0Reports(
   p0Buffer: ArrayBuffer,
   targetDate: string
 ): UlpReport[] {
-  const cicoRows = extractCicoRows(cicoBuffer);
+  const { records, noCheckIn } = buildTaskRecords(cicoBuffer);
   const p0Lookup = buildP0Lookup(p0Buffer);
 
-  const seen = new Map<string, CicoRow>();
-  for (const r of cicoRows) {
-    if (r.tglCatatDate !== targetDate) continue;
-    if (!seen.has(r.noTugas)) seen.set(r.noTugas, r);
-  }
+  const forDate = records.filter((r) => r.operationalDate === targetDate);
 
   type Bucket = Map<string, Map<"Pagi" | "Sore" | "Malam", { noTugas: string; mark: string }[]>>;
   const buckets = new Map<PoskoKey, Bucket>();
@@ -169,7 +223,7 @@ export function buildP0Reports(
   for (const u of ULP_ORDER) warningsByUlp.set(u.key, []);
   const globalUnmatched: string[] = [];
 
-  for (const r of seen.values()) {
+  for (const r of forDate) {
     const poskoKey = normPosko(r.posko);
     if (!poskoKey) {
       globalUnmatched.push(`${r.noTugas} (posko="${r.posko}")`);
@@ -184,27 +238,27 @@ export function buildP0Reports(
         .push(`Regu tidak dikenali: "${r.namaRegu}" (No Tugas ${r.noTugas}), diabaikan.`);
       continue;
     }
-    if (r.tglPengerjaanMinutes === null) {
-      warningsByUlp
-        .get(poskoKey)!
-        .push(`Jam "Tgl Pengerjaan" tidak terbaca (No Tugas ${r.noTugas}), diabaikan.`);
-      continue;
-    }
-    const shiftLabel = shiftFromMinutes(r.tglPengerjaanMinutes);
     const key = normNoTugas(r.noTugas);
     let mark: string;
     if (!p0Lookup.has(key)) mark = "❌";
     else if (!p0Lookup.get(key)) mark = "⚠️";
     else mark = "✅";
 
-    buckets.get(poskoKey)!.get(matchedRegu)!.get(shiftLabel)!.push({ noTugas: r.noTugas, mark });
+    buckets.get(poskoKey)!.get(matchedRegu)!.get(r.shift)!.push({ noTugas: r.noTugas, mark });
   }
 
   if (globalUnmatched.length > 0) {
     warningsByUlp.get(ULP_ORDER[0].key)!.push(
-      `${globalUnmatched.length} baris dengan posko tidak dikenali (diabaikan): ${globalUnmatched
+      `${globalUnmatched.length} No Tugas dengan posko tidak dikenali (diabaikan): ${globalUnmatched
         .slice(0, 5)
         .join("; ")}${globalUnmatched.length > 5 ? ", ..." : ""}`
+    );
+  }
+  if (noCheckIn.length > 0) {
+    warningsByUlp.get(ULP_ORDER[0].key)!.push(
+      `${noCheckIn.length} No Tugas tidak punya "Check In Petugas" yang bisa dibaca sehingga tidak bisa ditentukan shift/tanggalnya (diabaikan): ${noCheckIn
+        .slice(0, 5)
+        .join("; ")}${noCheckIn.length > 5 ? ", ..." : ""}`
     );
   }
 

@@ -19,10 +19,14 @@ Untuk setiap "No Tugas" pada tanggal terpilih (posko & regu diambil dari file CI
 
 Lookup No Tugas dicek gabungan di kedua sheet file P0 Merauke ("P0 Harian" dan "P0 Terencana"), dan case-insensitive (No Tugas/NO P0 disamakan ke huruf besar sebelum dibandingkan).
 
-Shift (Pagi/Sore/Malam) dihitung dari **jam pada kolom "Tgl Pengerjaan"** di file CICO — bukan dari kolom "Shif", karena kolom itu tidak selalu akurat. Timestamp di file CICO (APKT EIS) tercatat dalam WIB, sedangkan UP3 Merauke beroperasi di WIT (WIB + 2 jam), jadi jamnya dikonversi dulu ke WIT (`lib/p0.ts` → `WIB_TO_WIT_OFFSET_HOURS`) sebelum dicocokkan ke batas shift berikut:
-- Pagi: 08:00–14:59
-- Sore: 15:00–21:59
-- Malam: 22:00–07:59 (lintas tengah malam)
+Shift (Pagi/Sore/Malam) **dan tanggal operasional** ditentukan dari **jam "Check In Petugas" PALING AWAL** untuk tiap No Tugas — bukan dari kolom "Shif" maupun "Tgl Pengerjaan"/"Tgl Selesai". Alasannya: ketiga kolom itu tidak reliable (kolom Shif bisa salah/tidak konsisten untuk orang yang sama; timestamp pengerjaan/selesai bergeser karena petugas datang lebih awal atau serah terima piket molor). Jam check-in menandai kapan regu benar-benar mulai piket, dan konsisten sepanjang shift. Kalau satu No Tugas dikerjakan beberapa regu lintas shift, tugas itu "milik" shift yang **memulainya** (check-in paling awal).
+
+Timestamp di file CICO (APKT EIS) tercatat dalam WIB, sedangkan UP3 Merauke beroperasi di WIT (WIB + 2 jam), jadi jam check-in dikonversi dulu ke WIT (`lib/p0.ts` → `WIB_TO_WIT_OFFSET_MS`) sebelum dicocokkan ke batas shift berikut (`lib/roster.ts` → `shiftFromMinutes`). Batasnya sengaja dilebarkan (safety-margin) untuk mengakomodasi petugas yang datang lebih awal / serah terima yang molor:
+- Pagi: 05:30–11:59
+- Sore: 12:00–18:00
+- Malam: 18:01–05:29 (lintas tengah malam)
+
+**Tanggal operasional:** karena shift malam membentang 22:00 (H) s/d 08:00 (H+1) WIT, check-in yang jatuh di 00:00–05:29 WIT dihitung sebagai **malam hari sebelumnya** (H−1), bukan hari baru. Contoh: No Tugas yang check-in paling awalnya 20/07 20:13 WIB (= 22:13 WIT tgl 20) tetap masuk rekap **tanggal 20 Juli shift Malam**, walau pekerjaannya baru selesai 21 Juli.
 
 Regu yang tidak punya tugas pada tanggal & shift tertentu tetap ditampilkan dengan "nihil". Daftar regu tetap per ULP ada di `lib/roster.ts`.
 

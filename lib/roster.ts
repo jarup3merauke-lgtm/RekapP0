@@ -60,9 +60,11 @@ export function normPosko(s: string | null | undefined): PoskoKey | null {
 
 export const SHIFT_ORDER: ("Pagi" | "Sore" | "Malam")[] = ["Pagi", "Sore", "Malam"];
 
-// Shift ditentukan dari jam pengerjaan (waktu WIT), bukan dari kolom "Shif". Batas ini
-// dilebarkan untuk mengakomodasi serah terima piket yang molor di lapangan:
-// Pagi 05:30–11:59, Sore 12:00–18:00, Malam 18:01–05:29 (lintas tengah malam).
+// Shift ditentukan dari jam Check In Petugas (waktu WIT), bukan dari kolom "Shif"
+// maupun jam pengerjaan/selesai — keduanya tidak reliable. Batas ini dilebarkan
+// (safety-margin) untuk mengakomodasi petugas yang datang lebih awal / serah terima
+// piket yang molor: Pagi 05:30–11:59, Sore 12:00–18:00, Malam 18:01–05:29 (lintas
+// tengah malam).
 export function shiftFromMinutes(minutesOfDay: number): "Pagi" | "Sore" | "Malam" {
   const PAGI_START = 5 * 60 + 30; // 05:30
   const SORE_START = 12 * 60; // 12:00
